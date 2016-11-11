@@ -3253,7 +3253,8 @@ alarm_minutos DS.B 1 ; FOR WAKE UP TIME
 alarm_horas DS.B 1
 alarm_dias DS.B 1     
 temporal DS.B 1   
-selector DS.B 1    
+selector DS.B 1
+temp DS.B 1    
             
             ORG    0C000H ; Flash origin
             
@@ -3266,6 +3267,7 @@ _Startup:
 main:
 					JSR initial_config
 					JSR initial_states	
+				;	JMP do_exercise
 					JSR init_IRQ  ; Just for set the initial time, and clock
 					JMP *
 					
@@ -3297,6 +3299,7 @@ initial_states:
 					MOV #0,alarm_horas     ;|
 					MOV #0,alarm_dias	   ;|
 					MOV #0,selector
+					MOV #0,temp
 					JSR show_time
 					RTS
 ;********************************************************************Subroutine for initialize IRQ
@@ -3712,6 +3715,7 @@ Vrtc_ISR:
 				   INC segundos					;| Increment seconds
 				   LDA #60D					    ;|
 				   CBEQ segundos,inc_minutes    ;|
+				   BIL show_sec
 				   JSR show_time
 				   RTI	
 
@@ -3728,24 +3732,90 @@ do_exercise:
 					MOV #0,PTED ;|
 					MOV #0,PTFD ;|
 					MOV #0,PTGD ;|
+					BSET 1,PTDD ; TURN ON BUZZER
 					MOV #30,minutos
+					
+					BCLR 5,PTCDD
 					LDA minutos
 				    JSR separate_time
 				    JSR show_minutos
-					JMP *				   
+				    
+		    CLRA ; READING PORT 
+         	STA SCI2BDH 
+         	LDA #60 ; Setting baud rate to 9600 bps
+         	STA SCI2BDL 
+         	
+         	MOV #%00000000,SCI2C1 ; 
+         	MOV #%00000000,SCI2C3 ; No error flags
+         	BSET SCI1C2_RE,SCI2C2; Enabling data reception
+	 		BSET 2,PTDD							; This part is for data reception
+	 		
+delta: 		BRCLR SCI1S1_RDRF,SCI2S1,* 			; Wait for data	
+	 		LDA	SCI2D	 	
+	 		CBEQA #'u',led_off
+	 		CBEQA #'…',led_on
+	 		BRA delta
+
+led_on:
+			BRCLR 0,temp,decpes
+			;
+		    BRA delta
+led_off:	
+			BCLR 0,temp
+			BCLR 2,PTDD  ;
+			BRA delta
+		
+decpes:	
+		    DEC minutos
+		    LDA #0
+		    CBEQ minutos,aloha
+     	    LDA minutos
+			JSR separate_time
+			JSR show_minutos
+		    BSET 2,PTDD
+		    BSET 0,temp
+			BRA delta 			
+									   
+
 								   		  	
 inc_minutes:
 				   CLR segundos			 ;|
 				   INC minutos			 ;| Increment minutes
 				   LDA #60D				 ;|
 				   CBEQ minutos,inc_hour ;|
+				   BIL show_sec
 				   JSR show_time		 ;|
 				   RTI
+show_sec:    
+				   LDA #0h
+				   JSR separate_time
+				   JSR show_horas
+				   LDA segundos
+				   JSR separate_time
+				   JSR show_minutos
+				   RTI	
+				   				   
+aloha:				PULA ; Throw CCR away
+					PULA ; Throw A away
+					PULA ; Throw X away
+					PULA ; Throw PCH away 
+					PULA ; Throw PCL away  
+					LDHX #_Startup ; New address after interrupt
+					PSHX  
+					PSHH
+					CLRA
+					PSHA
+					PSHA
+					PSHA
+					CLR RTCSC
+					CLR IRQSC
+					RTI
 inc_hour:
 				   CLR minutos			 ;|
 				   INC horas		     ;| Increment hour
 				   LDA #13D				 ;|
 				   CBEQ minutos,inc_dias ;|
+				   BIL show_sec
 				   JSR show_time		 ;|
 				   RTI
 inc_dias:
@@ -3753,6 +3823,8 @@ inc_dias:
 				   INC dias       ;|
 				   JSR show_time
 				   RTI	
+				   
+			   
 show_time:    
 				   LDA horas
 				   JSR separate_time
@@ -3927,6 +3999,7 @@ blink_led:		   BSET 0,PTDD       ;|
 ;**********************************************************************Interrupt Service Routine for IRQ pin
 ISR_IRQ:
 				   JSR blink_led
+				   BSET 0,PTDD 
 				   BIH select_config  ;Change?
 				   JSR blink_led
 				   JSR blink_led
@@ -3972,8 +4045,7 @@ clr_ahours:          MOV #1,alarm_horas
 					 JSR show_alarm
 					 BRA enda_IRQ
 					 	
-end_IRQ:
-				  	 JSR show_time     ;| Display time 
+end_IRQ:		  	 JSR show_time     ;| Display time 
 enda_IRQ:		   	 BSET 2,IRQSC ; clearing flag 
 				     RTI	    	
 
